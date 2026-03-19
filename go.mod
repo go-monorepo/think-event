@@ -1,4 +1,4 @@
-module github.com/EladiaShipmenyrt89/think-event
+module github.com/go-monorepo/think-event
 
 go 1.25.1
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	event "github.com/EladiaShipmenyrt89/think-event"
+	event "github.com/go-monorepo/think-event"
 	"go.uber.org/zap"
 )
 
