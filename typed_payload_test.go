@@ -15,6 +15,12 @@ type stubBus struct {
 	subscribe func(eventType string, handler EventHandler) error
 }
 
+type localEvent struct {
+	eventType string
+	payload   interface{}
+	timestamp time.Time
+}
+
 func (b *stubBus) Publish(context.Context, Event) error {
 	return nil
 }
@@ -34,6 +40,18 @@ func (b *stubBus) Stop() error {
 	return nil
 }
 
+func (e *localEvent) Type() string {
+	return e.eventType
+}
+
+func (e *localEvent) Payload() interface{} {
+	return e.payload
+}
+
+func (e *localEvent) Timestamp() time.Time {
+	return e.timestamp
+}
+
 func TestPayloadAsDecodesRawPayload(t *testing.T) {
 	t.Parallel()
 
@@ -42,7 +60,6 @@ func TestPayloadAsDecodesRawPayload(t *testing.T) {
 		payload: map[string]interface{}{
 			"user_id": "u-1",
 		},
-		tenantID:   "tenant-1",
 		rawPayload: []byte(`{"user_id":"u-1","email":"test@example.com"}`),
 		timestamp:  time.Now(),
 	}
@@ -56,6 +73,31 @@ func TestPayloadAsDecodesRawPayload(t *testing.T) {
 		t.Fatalf("unexpected user id: %s", payload.UserID)
 	}
 	if payload.Email != "test@example.com" {
+		t.Fatalf("unexpected email: %s", payload.Email)
+	}
+}
+
+func TestPayloadAsFallsBackToPayloadValue(t *testing.T) {
+	t.Parallel()
+
+	evt := &localEvent{
+		eventType: "lottery.settle-status.trigger",
+		payload: map[string]interface{}{
+			"user_id": "u-2",
+			"email":   "fallback@example.com",
+		},
+		timestamp: time.Now(),
+	}
+
+	payload, err := PayloadAs[testPayload](evt)
+	if err != nil {
+		t.Fatalf("PayloadAs returned error: %v", err)
+	}
+
+	if payload.UserID != "u-2" {
+		t.Fatalf("unexpected user id: %s", payload.UserID)
+	}
+	if payload.Email != "fallback@example.com" {
 		t.Fatalf("unexpected email: %s", payload.Email)
 	}
 }
@@ -74,7 +116,6 @@ func TestSubscribeJSONWrapsTypedPayload(t *testing.T) {
 				payload: map[string]interface{}{
 					"user_id": "u-1",
 				},
-				tenantID:   "tenant-1",
 				rawPayload: []byte(`{"user_id":"u-1","email":"test@example.com"}`),
 				timestamp:  time.Now(),
 			})

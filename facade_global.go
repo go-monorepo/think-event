@@ -59,9 +59,19 @@ func Trigger(ctx context.Context, eventType string, event Event) error {
 	return GetFacade().Trigger(ctx, eventType, event)
 }
 
+// TriggerEvent 根据事件对象自身的 Type 触发事件
+func TriggerEvent(ctx context.Context, event Event) error {
+	return GetFacade().TriggerEvent(ctx, event)
+}
+
 // TriggerAsync 异步触发事件
 func TriggerAsync(ctx context.Context, eventType string, event Event) error {
 	return GetFacade().TriggerAsync(ctx, eventType, event)
+}
+
+// TriggerAsyncEvent 根据事件对象自身的 Type 异步触发事件
+func TriggerAsyncEvent(ctx context.Context, event Event) error {
+	return GetFacade().TriggerAsyncEvent(ctx, event)
 }
 
 // Remove 移除事件监听器

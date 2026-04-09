@@ -78,8 +78,8 @@ event.Trigger(ctx, "user.created", &UserCreatedEvent{
     EventTime: time.Now(),
 })
 
-// 方式3：异步触发（只发布到消息队列）
-event.TriggerAsync(ctx, "user.created", &UserCreatedEvent{...})
+// 方式3：异步触发（只发布到消息队列，推荐使用无 eventType 重复参数的安全入口）
+event.TriggerAsyncEvent(ctx, &UserCreatedEvent{...})
 ```
 
 ## 完整示例（类似 ThinkPHP）
@@ -245,7 +245,7 @@ type UserHook struct{}
 func (h *UserHook) AfterCreateAsync(ctx context.Context, user *User) error {
     // 使用事件系统触发事件
     if event.HasListener("user.created") {
-        return event.TriggerAsync(ctx, "user.created", &UserCreatedEvent{
+        return event.TriggerAsyncEvent(ctx, &UserCreatedEvent{
             UserID:    user.ID,
             Username:  user.Username,
             TenantID:  user.TenantID,

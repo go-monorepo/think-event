@@ -48,17 +48,17 @@ func (f *EventFacade) ListenAsync(eventType string, handler EventHandler) error 
 func (f *EventFacade) HasListener(eventType string) bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	
+
 	// 检查别名
 	if alias, ok := f.aliases[eventType]; ok {
 		eventType = alias
 	}
-	
+
 	// 检查本地监听器
 	if len(f.localListeners[eventType]) > 0 {
 		return true
 	}
-	
+
 	// 如果有事件总线，认为可能有远程监听器
 	return f.bus != nil
 }
@@ -66,16 +66,16 @@ func (f *EventFacade) HasListener(eventType string) bool {
 // Trigger 触发事件（同步执行本地监听器，异步发布到消息队列）
 // 示例: Event.Trigger("user.created", &UserCreatedEvent{UserID: "123"})
 func (f *EventFacade) Trigger(ctx context.Context, eventType string, event Event) error {
-	// 检查别名
-	if alias, ok := f.aliases[eventType]; ok {
-		eventType = alias
+	resolvedType, err := f.resolveEventType(eventType, event)
+	if err != nil {
+		return err
 	}
-	
+
 	// 1. 同步执行本地监听器
 	f.mu.RLock()
-	localHandlers := f.localListeners[eventType]
+	localHandlers := f.localListeners[resolvedType]
 	f.mu.RUnlock()
-	
+
 	var firstErr error
 	for _, handler := range localHandlers {
 		if err := handler(ctx, event); err != nil {
@@ -85,7 +85,7 @@ func (f *EventFacade) Trigger(ctx context.Context, eventType string, event Event
 			// 继续执行其他监听器
 		}
 	}
-	
+
 	// 2. 异步发布到消息队列（如果有事件总线）
 	if f.bus != nil {
 		// 在goroutine中发布，不阻塞主流程
@@ -96,8 +96,16 @@ func (f *EventFacade) Trigger(ctx context.Context, eventType string, event Event
 			}
 		}()
 	}
-	
+
 	return firstErr
+}
+
+// TriggerEvent 根据事件对象自身的 Type 触发事件，避免重复传 eventType。
+func (f *EventFacade) TriggerEvent(ctx context.Context, event Event) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
+	return f.Trigger(ctx, event.Type(), event)
 }
 
 // TriggerAsync 异步触发事件（只发布到消息队列，不执行本地监听器）
@@ -106,12 +114,20 @@ func (f *EventFacade) TriggerAsync(ctx context.Context, eventType string, event 
 	if f.bus == nil {
 		return fmt.Errorf("event bus not configured")
 	}
-	
-	// 注意：事件类型从event对象本身获取，这里不需要使用eventType参数
-	// 但为了保持API一致性，保留eventType参数
-	_ = eventType
-	
+
+	if _, err := f.resolveEventType(eventType, event); err != nil {
+		return err
+	}
+
 	return f.bus.Publish(ctx, event)
+}
+
+// TriggerAsyncEvent 根据事件对象自身的 Type 异步触发事件。
+func (f *EventFacade) TriggerAsyncEvent(ctx context.Context, event Event) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
+	return f.TriggerAsync(ctx, event.Type(), event)
 }
 
 // Remove 移除事件监听器
@@ -162,11 +178,11 @@ func (f *EventFacade) Until(ctx context.Context, eventType string, event Event) 
 	if alias, ok := f.aliases[eventType]; ok {
 		eventType = alias
 	}
-	
+
 	f.mu.RLock()
 	localHandlers := f.localListeners[eventType]
 	f.mu.RUnlock()
-	
+
 	// 执行本地监听器，返回第一个非nil结果
 	for _, handler := range localHandlers {
 		// 注意：这里需要修改EventHandler接口才能返回值
@@ -175,7 +191,7 @@ func (f *EventFacade) Until(ctx context.Context, eventType string, event Event) 
 			return nil, err
 		}
 	}
-	
+
 	return nil, nil
 }
 
@@ -195,3 +211,26 @@ func (f *EventFacade) Stop() error {
 	return f.bus.Stop()
 }
 
+func (f *EventFacade) resolveEventType(eventType string, event Event) (string, error) {
+	if event == nil {
+		return "", fmt.Errorf("event is nil")
+	}
+
+	resolvedType := eventType
+
+	f.mu.RLock()
+	if alias, ok := f.aliases[eventType]; ok {
+		resolvedType = alias
+	}
+	f.mu.RUnlock()
+
+	if resolvedType == "" {
+		resolvedType = event.Type()
+	}
+
+	if resolvedType != event.Type() {
+		return "", fmt.Errorf("event type mismatch: arg=%s event=%s", resolvedType, event.Type())
+	}
+
+	return resolvedType, nil
+}

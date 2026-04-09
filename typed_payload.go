@@ -22,25 +22,24 @@ func PayloadAs[T any](evt Event) (*T, error) {
 		return nil, fmt.Errorf("event is nil")
 	}
 
-	if payload, ok := evt.Payload().(*T); ok {
+	payloadValue := evt.Payload()
+	if payload, ok := payloadValue.(*T); ok {
 		return payload, nil
 	}
-	if payload, ok := evt.Payload().(T); ok {
+	if payload, ok := payloadValue.(T); ok {
 		payloadCopy := payload
 		return &payloadCopy, nil
 	}
 
-	rawEvent, ok := evt.(RawPayloadEvent)
-	if !ok {
-		return nil, fmt.Errorf("event %s does not expose raw payload bytes", evt.Type())
+	if payload, err := decodePayloadBytes[T](payloadBytes(evt)); err == nil {
+		return payload, nil
 	}
 
-	payload := new(T)
-	if err := json.Unmarshal(rawEvent.PayloadBytes(), payload); err != nil {
-		return nil, fmt.Errorf("failed to decode payload for %s: %w", evt.Type(), err)
+	if payload, err := decodePayloadValue[T](payloadValue); err == nil {
+		return payload, nil
 	}
 
-	return payload, nil
+	return nil, fmt.Errorf("failed to decode payload for %s into target type", evt.Type())
 }
 
 // SubscribeJSON 注册带强类型 JSON payload 的异步订阅。
@@ -109,4 +108,47 @@ func (e *decodedPayloadEvent) PayloadBytes() []byte {
 		return nil
 	}
 	return rawEvent.PayloadBytes()
+}
+
+func payloadBytes(evt Event) []byte {
+	rawEvent, ok := evt.(RawPayloadEvent)
+	if !ok {
+		return nil
+	}
+	return rawEvent.PayloadBytes()
+}
+
+func decodePayloadBytes[T any](data []byte) (*T, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty payload bytes")
+	}
+
+	payload := new(T)
+	if err := json.Unmarshal(data, payload); err != nil {
+		return nil, err
+	}
+
+	return payload, nil
+}
+
+func decodePayloadValue[T any](payloadValue interface{}) (*T, error) {
+	if payloadValue == nil {
+		return nil, fmt.Errorf("payload is nil")
+	}
+
+	switch value := payloadValue.(type) {
+	case json.RawMessage:
+		return decodePayloadBytes[T](value)
+	case []byte:
+		return decodePayloadBytes[T](value)
+	case string:
+		return decodePayloadBytes[T]([]byte(value))
+	}
+
+	data, err := json.Marshal(payloadValue)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodePayloadBytes[T](data)
 }
