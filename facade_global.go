@@ -7,9 +7,10 @@ import (
 
 // Event 全局事件门面实例（单例模式）
 var (
-	globalFacade *EventFacade
-	facadeOnce   sync.Once
-	facadeMu     sync.RWMutex
+	globalFacade   *EventFacade
+	globalHAConfig *HighAvailabilityConfig
+	facadeOnce     sync.Once
+	facadeMu       sync.RWMutex
 )
 
 // Init 初始化全局事件门面
@@ -37,6 +38,28 @@ func SetFacade(facade *EventFacade) {
 	globalFacade = facade
 }
 
+// SetHAConfig 设置全局默认高可用配置；传 nil 时恢复内置默认配置。
+func SetHAConfig(config *HighAvailabilityConfig) {
+	facadeMu.Lock()
+	defer facadeMu.Unlock()
+	if config == nil {
+		globalHAConfig = nil
+		return
+	}
+
+	cloned := *config
+	globalHAConfig = &cloned
+}
+
+// GetHAConfig 获取全局默认高可用配置。
+func GetHAConfig() *HighAvailabilityConfig {
+	facadeMu.RLock()
+	config := globalHAConfig
+	facadeMu.RUnlock()
+
+	return cloneHAConfig(config)
+}
+
 // 全局便捷函数（类似ThinkPHP的Event）
 
 // Listen 注册事件监听
@@ -59,6 +82,15 @@ func Trigger(ctx context.Context, eventType string, event Event) error {
 	return GetFacade().Trigger(ctx, eventType, event)
 }
 
+// TriggerWithHA 高可用触发事件；未传配置时使用全局默认配置。
+func TriggerWithHA(ctx context.Context, eventType string, event Event, configs ...*HighAvailabilityConfig) error {
+	haFacade := &HighAvailabilityEventFacade{
+		EventFacade: GetFacade(),
+		config:      resolveHAConfig(configs...),
+	}
+	return haFacade.TriggerWithHA(ctx, eventType, event)
+}
+
 // TriggerEvent 根据事件对象自身的 Type 触发事件
 func TriggerEvent(ctx context.Context, event Event) error {
 	return GetFacade().TriggerEvent(ctx, event)
@@ -67,6 +99,15 @@ func TriggerEvent(ctx context.Context, event Event) error {
 // TriggerAsync 异步触发事件
 func TriggerAsync(ctx context.Context, eventType string, event Event) error {
 	return GetFacade().TriggerAsync(ctx, eventType, event)
+}
+
+// TriggerAsyncWithHA 高可用异步触发事件；未传配置时使用全局默认配置。
+func TriggerAsyncWithHA(ctx context.Context, eventType string, event Event, configs ...*HighAvailabilityConfig) error {
+	haFacade := &HighAvailabilityEventFacade{
+		EventFacade: GetFacade(),
+		config:      resolveHAConfig(configs...),
+	}
+	return haFacade.TriggerAsyncWithHA(ctx, eventType, event)
 }
 
 // TriggerAsyncEvent 根据事件对象自身的 Type 异步触发事件
@@ -107,4 +148,21 @@ func Start(ctx context.Context) error {
 // Stop 停止事件总线
 func Stop() error {
 	return GetFacade().Stop()
+}
+
+func resolveHAConfig(configs ...*HighAvailabilityConfig) *HighAvailabilityConfig {
+	if len(configs) > 0 && configs[0] != nil {
+		return cloneHAConfig(configs[0])
+	}
+
+	return GetHAConfig()
+}
+
+func cloneHAConfig(config *HighAvailabilityConfig) *HighAvailabilityConfig {
+	if config == nil {
+		return DefaultHighAvailabilityConfig()
+	}
+
+	cloned := *config
+	return &cloned
 }

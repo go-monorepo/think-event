@@ -63,7 +63,7 @@ func (f *EventFacade) HasListener(eventType string) bool {
 	return f.bus != nil
 }
 
-// Trigger 触发事件（同步执行本地监听器，异步发布到消息队列）
+// Trigger 触发事件（同步执行本地监听器，异步发布到事件总线）
 // 示例: Event.Trigger("user.created", &UserCreatedEvent{UserID: "123"})
 func (f *EventFacade) Trigger(ctx context.Context, eventType string, event Event) error {
 	resolvedType, err := f.resolveEventType(eventType, event)
@@ -72,21 +72,9 @@ func (f *EventFacade) Trigger(ctx context.Context, eventType string, event Event
 	}
 
 	// 1. 同步执行本地监听器
-	f.mu.RLock()
-	localHandlers := f.localListeners[resolvedType]
-	f.mu.RUnlock()
+	firstErr := f.triggerLocal(ctx, resolvedType, event)
 
-	var firstErr error
-	for _, handler := range localHandlers {
-		if err := handler(ctx, event); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			// 继续执行其他监听器
-		}
-	}
-
-	// 2. 异步发布到消息队列（如果有事件总线）
+	// 2. 异步发布到事件总线（如果有事件总线）
 	if f.bus != nil {
 		// 在goroutine中发布，不阻塞主流程
 		go func() {
@@ -108,7 +96,7 @@ func (f *EventFacade) TriggerEvent(ctx context.Context, event Event) error {
 	return f.Trigger(ctx, event.Type(), event)
 }
 
-// TriggerAsync 异步触发事件（只发布到消息队列，不执行本地监听器）
+// TriggerAsync 异步触发事件（只发布到事件总线，不执行本地监听器）
 // 示例: Event.TriggerAsync("user.created", &UserCreatedEvent{UserID: "123"})
 func (f *EventFacade) TriggerAsync(ctx context.Context, eventType string, event Event) error {
 	if f.bus == nil {
@@ -120,6 +108,24 @@ func (f *EventFacade) TriggerAsync(ctx context.Context, eventType string, event 
 	}
 
 	return f.bus.Publish(ctx, event)
+}
+
+func (f *EventFacade) triggerLocal(ctx context.Context, eventType string, event Event) error {
+	f.mu.RLock()
+	localHandlers := f.localListeners[eventType]
+	f.mu.RUnlock()
+
+	var firstErr error
+	for _, handler := range localHandlers {
+		if err := handler(ctx, event); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			// 继续执行其他监听器
+		}
+	}
+
+	return firstErr
 }
 
 // TriggerAsyncEvent 根据事件对象自身的 Type 异步触发事件。

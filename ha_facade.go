@@ -8,14 +8,14 @@ import (
 // HighAvailabilityConfig 高可用配置
 type HighAvailabilityConfig struct {
 	// 重试配置
-	MaxRetries      int           // 最大重试次数
-	RetryInterval   time.Duration // 重试间隔
-	RetryBackoff    bool          // 是否使用指数退避
-	
+	MaxRetries    int           // 最大重试次数
+	RetryInterval time.Duration // 重试间隔
+	RetryBackoff  bool          // 是否使用指数退避
+
 	// 降级配置
-	FallbackEnabled bool          // 是否启用降级
-	FallbackHandler EventHandler  // 降级处理器
-	
+	FallbackEnabled bool         // 是否启用降级
+	FallbackHandler EventHandler // 降级处理器
+
 	// 超时配置
 	Timeout time.Duration // 事件处理超时时间
 }
@@ -42,7 +42,7 @@ func NewHighAvailabilityEventFacade(bus EventBus, config *HighAvailabilityConfig
 	if config == nil {
 		config = DefaultHighAvailabilityConfig()
 	}
-	
+
 	return &HighAvailabilityEventFacade{
 		EventFacade: NewEventFacade(bus),
 		config:      config,
@@ -51,17 +51,22 @@ func NewHighAvailabilityEventFacade(bus EventBus, config *HighAvailabilityConfig
 
 // TriggerWithHA 高可用触发事件（带重试和降级）
 func (f *HighAvailabilityEventFacade) TriggerWithHA(ctx context.Context, eventType string, event Event) error {
+	resolvedType, err := f.resolveEventType(eventType, event)
+	if err != nil {
+		return err
+	}
+
 	// 1. 先执行本地监听器（同步，带超时）
-	if err := f.triggerLocalWithTimeout(ctx, eventType, event); err != nil {
+	if err := f.triggerLocalWithTimeout(ctx, resolvedType, event); err != nil {
 		// 本地监听器失败，记录日志但不阻塞
 		_ = err
 	}
-	
-	// 2. 异步发布到消息队列（带重试）
+
+	// 2. 异步发布到 Kafka / 事件总线（带重试）
 	if f.bus != nil {
-		go f.publishWithRetry(ctx, eventType, event)
+		go f.publishWithRetry(ctx, event)
 	}
-	
+
 	return nil
 }
 
@@ -69,12 +74,12 @@ func (f *HighAvailabilityEventFacade) TriggerWithHA(ctx context.Context, eventTy
 func (f *HighAvailabilityEventFacade) triggerLocalWithTimeout(ctx context.Context, eventType string, event Event) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, f.config.Timeout)
 	defer cancel()
-	
+
 	done := make(chan error, 1)
 	go func() {
-		done <- f.EventFacade.Trigger(timeoutCtx, eventType, event)
+		done <- f.EventFacade.triggerLocal(timeoutCtx, eventType, event)
 	}()
-	
+
 	select {
 	case err := <-done:
 		return err
@@ -88,10 +93,10 @@ func (f *HighAvailabilityEventFacade) triggerLocalWithTimeout(ctx context.Contex
 }
 
 // publishWithRetry 带重试的事件发布
-func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, eventType string, event Event) {
+func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, event Event) {
 	var err error
 	retryInterval := f.config.RetryInterval
-	
+
 	for i := 0; i <= f.config.MaxRetries; i++ {
 		if i > 0 {
 			// 重试前等待
@@ -101,14 +106,14 @@ func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, even
 				retryInterval *= 2
 			}
 		}
-		
+
 		err = f.bus.Publish(ctx, event)
 		if err == nil {
 			// 发布成功
 			return
 		}
 	}
-	
+
 	// 所有重试都失败，执行降级处理
 	if f.config.FallbackEnabled && f.config.FallbackHandler != nil {
 		_ = f.config.FallbackHandler(ctx, event)
@@ -117,11 +122,17 @@ func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, even
 
 // TriggerAsyncWithHA 高可用异步触发事件
 func (f *HighAvailabilityEventFacade) TriggerAsyncWithHA(ctx context.Context, eventType string, event Event) error {
-	if f.bus == nil {
-		return f.config.FallbackHandler(ctx, event)
+	if _, err := f.resolveEventType(eventType, event); err != nil {
+		return err
 	}
-	
-	go f.publishWithRetry(ctx, eventType, event)
+
+	if f.bus == nil {
+		if f.config.FallbackEnabled && f.config.FallbackHandler != nil {
+			return f.config.FallbackHandler(ctx, event)
+		}
+		return nil
+	}
+
+	go f.publishWithRetry(ctx, event)
 	return nil
 }
-
