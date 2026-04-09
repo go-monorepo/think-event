@@ -78,7 +78,6 @@ func (b *KafkaEventBus) Publish(ctx context.Context, event Event) error {
 		Value: sarama.ByteEncoder(data),
 		Headers: []sarama.RecordHeader{
 			{Key: []byte("event_type"), Value: []byte(event.Type())},
-			{Key: []byte("tenant_id"), Value: []byte(event.GetTenantID())},
 		},
 		Timestamp: event.Timestamp(),
 	}
@@ -91,7 +90,6 @@ func (b *KafkaEventBus) Publish(ctx context.Context, event Event) error {
 
 	b.logger.Debug("event published",
 		zap.String("event_type", event.Type()),
-		zap.String("tenant_id", event.GetTenantID()),
 		zap.Int32("partition", partition),
 		zap.Int64("offset", offset),
 	)
@@ -184,13 +182,7 @@ func (h *kafkaConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSes
 			}
 
 			// 解析事件类型
-			eventType := ""
-			for _, header := range message.Headers {
-				if string(header.Key) == "event_type" {
-					eventType = string(header.Value)
-					break
-				}
-			}
+			eventType := kafkaHeaderValue(message.Headers, "event_type")
 
 			if eventType == "" {
 				h.logger.Warn("message without event_type header", zap.Int64("offset", message.Offset))
@@ -217,16 +209,25 @@ func (h *kafkaConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSes
 				continue
 			}
 
+			tenantID := kafkaHeaderValue(message.Headers, "tenant_id")
+			if tenantID == "" {
+				if value, ok := eventData["tenant_id"].(string); ok {
+					tenantID = value
+				}
+			}
+
 			// 创建事件对象
 			event := &genericEvent{
-				eventType: eventType,
-				payload:   eventData,
-				timestamp: message.Timestamp,
+				eventType:  eventType,
+				payload:    eventData,
+				tenantID:   tenantID,
+				rawPayload: append(json.RawMessage(nil), message.Value...),
+				timestamp:  message.Timestamp,
 			}
 
 			// 执行处理器
 			ctx := context.Background()
-			if tenantID, ok := eventData["tenant_id"].(string); ok {
+			if tenantID != "" {
 				ctx = context.WithValue(ctx, "tenant_id", tenantID)
 			}
 
@@ -251,9 +252,11 @@ func (h *kafkaConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSes
 
 // genericEvent 通用事件实现
 type genericEvent struct {
-	eventType string
-	payload   map[string]interface{}
-	timestamp time.Time
+	eventType  string
+	payload    interface{}
+	tenantID   string
+	rawPayload json.RawMessage
+	timestamp  time.Time
 }
 
 func (e *genericEvent) Type() string {
@@ -264,13 +267,19 @@ func (e *genericEvent) Payload() interface{} {
 	return e.payload
 }
 
-func (e *genericEvent) GetTenantID() string {
-	if tenantID, ok := e.payload["tenant_id"].(string); ok {
-		return tenantID
-	}
-	return ""
-}
-
 func (e *genericEvent) Timestamp() time.Time {
 	return e.timestamp
+}
+
+func (e *genericEvent) PayloadBytes() []byte {
+	return e.rawPayload
+}
+
+func kafkaHeaderValue(headers []*sarama.RecordHeader, key string) string {
+	for _, header := range headers {
+		if string(header.Key) == key {
+			return string(header.Value)
+		}
+	}
+	return ""
 }

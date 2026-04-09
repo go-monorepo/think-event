@@ -40,11 +40,9 @@ event.Listen("user.created", func(ctx context.Context, evt event.Event) error {
     return nil
 })
 
-// 方式2：注册异步监听器（通过消息队列）
-event.ListenAsync("user.created", func(ctx context.Context, evt event.Event) error {
-    // 这个监听器会在其他服务中执行
-    userEvent := evt.Payload().(*UserCreatedEvent)
-    return sendWelcomeEmail(userEvent.Email)
+// 方式2：注册异步监听器（通过消息队列，自动解码 JSON payload）
+event.ListenAsyncJSON[UserCreatedEvent]("user.created", func(ctx context.Context, payload *UserCreatedEvent, evt event.Event) error {
+    return sendWelcomeEmail(payload.Email)
 })
 
 // 方式3：批量注册

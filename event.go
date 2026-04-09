@@ -23,12 +23,9 @@ type Event interface {
 	Type() string
 	// Payload 返回事件负载
 	Payload() interface{}
-	// GetTenantID 返回租户ID
-	GetTenantID() string
 	// Timestamp 返回事件时间戳
 	Timestamp() time.Time
 }
 
 // EventHandler 事件处理器
 type EventHandler func(ctx context.Context, event Event) error
-
