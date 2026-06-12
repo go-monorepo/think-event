@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -145,4 +146,29 @@ func TestSubscribeJSONWrapsTypedPayload(t *testing.T) {
 	if !called {
 		t.Fatal("typed handler was not called")
 	}
+}
+
+// genericEvent 通用事件实现（原位于 kafka_bus.go，Kafka 实现移除后仅测试使用）
+type genericEvent struct {
+	eventType  string
+	payload    interface{}
+	tenantID   string
+	rawPayload json.RawMessage
+	timestamp  time.Time
+}
+
+func (e *genericEvent) Type() string {
+	return e.eventType
+}
+
+func (e *genericEvent) Payload() interface{} {
+	return e.payload
+}
+
+func (e *genericEvent) Timestamp() time.Time {
+	return e.timestamp
+}
+
+func (e *genericEvent) PayloadBytes() []byte {
+	return e.rawPayload
 }
