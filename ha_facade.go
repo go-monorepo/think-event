@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+// PublishFailureHandler 发布重试耗尽且无 FallbackHandler 时的全局回调。
+// 业务侧应在启动时设置，用于告警或把事件落盘补偿；
+// 不设置时事件会被静默丢弃（与历史行为一致）。
+var PublishFailureHandler func(event Event, err error)
+
+// maxRetryInterval 指数退避的间隔上限，防止间隔无限翻倍甚至溢出。
+const maxRetryInterval = 30 * time.Second
+
 // HighAvailabilityConfig 高可用配置
 type HighAvailabilityConfig struct {
 	// 重试配置
@@ -102,8 +110,11 @@ func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, even
 			// 重试前等待
 			time.Sleep(retryInterval)
 			if f.config.RetryBackoff {
-				// 指数退避
+				// 指数退避（带上限）
 				retryInterval *= 2
+				if retryInterval > maxRetryInterval {
+					retryInterval = maxRetryInterval
+				}
 			}
 		}
 
@@ -117,6 +128,11 @@ func (f *HighAvailabilityEventFacade) publishWithRetry(ctx context.Context, even
 	// 所有重试都失败，执行降级处理
 	if f.config.FallbackEnabled && f.config.FallbackHandler != nil {
 		_ = f.config.FallbackHandler(ctx, event)
+		return
+	}
+	// 没有降级处理器时通知全局回调，避免事件被静默丢弃
+	if PublishFailureHandler != nil {
+		PublishFailureHandler(event, err)
 	}
 }
 
